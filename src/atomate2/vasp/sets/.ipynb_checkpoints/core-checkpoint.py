@@ -193,14 +193,11 @@ class NonSCFSetGenerator(VaspInputGenerator):
 
     mode: str = "line"
     dedos: float = 0.02
-#    reciprocal_density: float = 100
-    reciprocal_density: float = 200
-
+    reciprocal_density: float = 100
     reciprocal_density_metal: float = 400
     line_density: float = 20
     optics: bool = False
-    nbands_factor: float = 2
-#    nbands_factor: float = 1.2
+    nbands_factor: float = 1.2
     auto_ispin: bool = True
 
     def __post_init__(self) -> None:
