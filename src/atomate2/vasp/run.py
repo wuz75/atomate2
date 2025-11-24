@@ -1,23 +1,20 @@
-"""
-Functions to run VASP.
-
-Todo
-----
-- Implement vasp_ncl and auto_ncl in custodian.
-"""
+"""Functions to run VASP."""
 
 from __future__ import annotations
 
 import logging
 import shlex
 import subprocess
-from os.path import expandvars
+from glob import glob
+from os.path import exists, expandvars
 from typing import TYPE_CHECKING, Any
 
 from custodian import Custodian
+from custodian.custodian import Validator
 from custodian.vasp.handlers import (
     FrozenJobErrorHandler,
     IncorrectSmearingHandler,
+    KspacingMetalHandler,
     LargeSigmaHandler,
     MeshSymmetryErrorHandler,
     NonConvergingErrorHandler,
@@ -28,20 +25,25 @@ from custodian.vasp.handlers import (
     VaspErrorHandler,
     WalltimeHandler,
 )
-from custodian.vasp.jobs import VaspJob
+from custodian.vasp.jobs import VaspJob, VaspNEBJob
 from custodian.vasp.validators import VaspFilesValidator, VasprunXMLValidator
-from jobflow.utils import ValueEnum
+
+try:
+    from emmet.core.types.enums import ValueEnum
+except ImportError:
+    from emmet.core.utils import ValueEnum
 
 from atomate2 import SETTINGS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
-    from custodian.custodian import ErrorHandler, Validator
+    from custodian.custodian import ErrorHandler
+    from emmet.core.neb import NebIntermediateImagesDoc, NebTaskDoc
     from emmet.core.tasks import TaskDoc
 
-
-_DEFAULT_HANDLERS = (
+DEFAULT_HANDLERS = (
     VaspErrorHandler(),
     MeshSymmetryErrorHandler(),
     UnconvergedErrorHandler(),
@@ -52,6 +54,7 @@ _DEFAULT_HANDLERS = (
     StdErrHandler(),
     LargeSigmaHandler(),
     IncorrectSmearingHandler(),
+    KspacingMetalHandler(),
 )
 _DEFAULT_VALIDATORS = (VasprunXMLValidator(), VaspFilesValidator())
 
@@ -70,6 +73,7 @@ class JobType(ValueEnum):
       :obj:`.VaspJob.metagga_opt_run`.
     - ``FULL_OPT``: Custodian full optimization run from
       :obj:`.VaspJob.full_opt_run`.
+    - ``NEB``: Run a VASP NEB job.
     """
 
     DIRECT = "direct"
@@ -77,6 +81,7 @@ class JobType(ValueEnum):
     DOUBLE_RELAXATION = "double relaxation"
     METAGGA_OPT = "metagga opt"
     FULL_OPT = "full opt"
+    NEB = "neb"
 
 
 def run_vasp(
@@ -85,8 +90,8 @@ def run_vasp(
     vasp_gamma_cmd: str = SETTINGS.VASP_GAMMA_CMD,
     max_errors: int = SETTINGS.VASP_CUSTODIAN_MAX_ERRORS,
     scratch_dir: str = SETTINGS.CUSTODIAN_SCRATCH_DIR,
-    handlers: Sequence[ErrorHandler] = _DEFAULT_HANDLERS,
-    validators: Sequence[Validator] = _DEFAULT_VALIDATORS,
+    handlers: Sequence[ErrorHandler] = DEFAULT_HANDLERS,
+    validators: Sequence[Validator] | None = None,
     wall_time: int | None = None,
     vasp_job_kwargs: dict[str, Any] = None,
     custodian_kwargs: dict[str, Any] = None,
@@ -122,6 +127,9 @@ def run_vasp(
     """
     vasp_job_kwargs = vasp_job_kwargs or {}
     custodian_kwargs = custodian_kwargs or {}
+    validators = validators or (
+        _DEFAULT_VALIDATORS if job_type != JobType.NEB else (VaspNebFilesValidator(),)
+    )
 
     vasp_cmd = expandvars(vasp_cmd)
     vasp_gamma_cmd = expandvars(vasp_gamma_cmd)
@@ -130,7 +138,8 @@ def run_vasp(
 
     vasp_job_kwargs.setdefault("auto_npar", False)
 
-    vasp_job_kwargs.update(gamma_vasp_cmd=split_vasp_gamma_cmd)
+    if job_type != JobType.DOUBLE_RELAXATION:
+        vasp_job_kwargs.update(gamma_vasp_cmd=split_vasp_gamma_cmd)
 
     if job_type == JobType.DIRECT:
         logger.info(f"Running command: {vasp_cmd}")
@@ -146,6 +155,8 @@ def run_vasp(
         jobs = VaspJob.metagga_opt_run(split_vasp_cmd, **vasp_job_kwargs)
     elif job_type == JobType.FULL_OPT:
         jobs = VaspJob.full_opt_run(split_vasp_cmd, **vasp_job_kwargs)
+    elif job_type == JobType.NEB:
+        jobs = [VaspNEBJob(split_vasp_cmd, **vasp_job_kwargs)]
     else:
         raise ValueError(f"Unsupported {job_type=}")
 
@@ -166,7 +177,7 @@ def run_vasp(
 
 
 def should_stop_children(
-    task_document: TaskDoc,
+    task_document: TaskDoc | NebTaskDoc | NebIntermediateImagesDoc,
     handle_unsuccessful: bool | str = SETTINGS.VASP_HANDLE_UNSUCCESSFUL,
 ) -> bool:
     """
@@ -202,3 +213,28 @@ def should_stop_children(
         )
 
     raise RuntimeError(f"Unknown option for {handle_unsuccessful=}")
+
+
+class VaspNebFilesValidator(Validator):
+    """
+    Validate VASP files for NEB jobs.
+
+    Analog of custodian's VaspFilesValidator for NEB runs.
+    """
+
+    def check(self, base_directory: str | Path = "./") -> bool:
+        """
+        Check that VASP ran in each NEB image directory.
+
+        This validator ensures that CONTCAR, OSZICAR, and OUTCAR
+        files are created in each NEB image directory, consistent
+        with VaspFilesValidator.
+
+        VASP does not create these files in the endpoint directories.
+        """
+        image_dirs = sorted(glob(f"{base_directory}/[0-9][0-9]"))[1:-1]
+        return any(
+            not exists(f"{image_dir}/{vasp_file}")
+            for vasp_file in ("CONTCAR", "OSZICAR", "OUTCAR")
+            for image_dir in image_dirs
+        )

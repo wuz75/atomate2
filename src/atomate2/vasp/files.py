@@ -37,7 +37,7 @@ def copy_vasp_outputs(
 
     For folders containing multiple calculations (e.g., suffixed with relax1, relax2,
     etc), this function will only copy the files with the highest numbered suffix and
-    the suffix will be removed. Additional vasp files will be also be  copied with the
+    the suffix will be removed. Additional vasp files will be also be copied with the
     same suffix applied. Lastly, this function will gunzip any gzipped files.
 
     Parameters
@@ -77,7 +77,7 @@ def copy_vasp_outputs(
     # find optional files; do not fail if KPOINTS is missing, this might be KSPACING
     # note: POTCAR files never have the relax extension, whereas KPOINTS files should
     optional_files = []
-    for file in ["POTCAR", "POTCAR.spec", "KPOINTS" + relax_ext]:
+    for file in ("POTCAR", "POTCAR.spec", "KPOINTS" + relax_ext):
         found_file = get_zfile(directory_listing, file, allow_missing=True)
         if found_file is not None:
             optional_files.append(found_file)
@@ -104,8 +104,10 @@ def copy_vasp_outputs(
     if relax_ext:
         all_files = optional_files + required_files
         files_to_rename = {
-            k.name.replace(".gz", ""): k.name.replace(relax_ext, "").replace(".gz", "")
-            for k in all_files
+            file.name.replace(".gz", ""): file.name.replace(relax_ext, "").replace(
+                ".gz", ""
+            )
+            for file in all_files
         }
         rename_files(files_to_rename, allow_missing=True, file_client=file_client)
 
@@ -199,4 +201,4 @@ def write_vasp_input_set(
                 Path(filename).unlink()
 
     logger.info("Writing VASP input set.")
-    vis.write_input(directory, potcar_spec=potcar_spec, **kwargs)
+    vis.write_input(directory, **kwargs)

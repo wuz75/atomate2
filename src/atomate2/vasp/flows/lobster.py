@@ -6,17 +6,27 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from jobflow import Flow, Maker
+from monty.dev import requires
 
+from atomate2.common.jobs.utils import remove_workflow_files
 from atomate2.lobster.jobs import LobsterMaker
 from atomate2.vasp.flows.core import DoubleRelaxMaker, UniformBandStructureMaker
 from atomate2.vasp.jobs.core import NonSCFMaker, RelaxMaker, StaticMaker
 from atomate2.vasp.jobs.lobster import (
-    delete_lobster_wavecar,
     get_basis_infos,
     get_lobster_jobs,
     update_user_incar_settings_maker,
 )
 from atomate2.vasp.sets.core import NonSCFSetGenerator, StaticSetGenerator
+
+try:
+    import ijson
+    from lobsterpy.cohp.analyze import Analysis
+    from lobsterpy.cohp.describe import Description
+except ImportError:
+    ijson = None
+    Analysis = None
+    Description = None
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -101,13 +111,17 @@ class VaspLobsterMaker(Maker):
     address_min_basis: str | None = None
     address_max_basis: str | None = None
 
+    @requires(
+        Analysis,
+        "This flow requires lobsterpy and ijson to function properly. "
+        "Please reinstall atomate2 using atomate2[lobster]",
+    )
     def make(
         self,
         structure: Structure,
         prev_dir: str | Path | None = None,
     ) -> Flow:
-        """
-        Make flow to calculate bonding properties.
+        """Make flow to calculate bonding properties.
 
         Parameters
         ----------
@@ -165,10 +179,12 @@ class VaspLobsterMaker(Maker):
         # delete all WAVECARs that have been copied
         # TODO:  this has to be adapted as well
         if self.delete_wavecars:
-            delete_wavecars = delete_lobster_wavecar(
-                dirs=lobster_jobs.output["lobster_dirs"],
-                lobster_static_dir=lobster_static.output.dir_name,
+            delete_wavecars = remove_workflow_files(
+                [lobster_jobs.output["lobster_dirs"], lobster_static.output.dir_name],
+                ["WAVECAR"],
+                allow_zpath=True,
             )
+            delete_wavecars.name = "delete_lobster_wavecar"
             jobs.append(delete_wavecars)
 
         return Flow(jobs, output=lobster_jobs.output)

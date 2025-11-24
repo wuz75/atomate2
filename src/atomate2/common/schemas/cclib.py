@@ -3,7 +3,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, Union
 
 from emmet.core.structure import MoleculeMetadata
 from monty.dev import requires
@@ -11,6 +11,7 @@ from monty.json import jsanitize
 from pydantic import Field
 from pymatgen.core import Molecule
 from pymatgen.core.periodic_table import Element
+from typing_extensions import Self
 
 from atomate2 import __version__
 from atomate2.utils.datetime import datetime_str
@@ -23,7 +24,6 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
-_T = TypeVar("_T", bound="TaskDocument")
 
 
 class TaskDocument(MoleculeMetadata, extra="allow"):  # type: ignore[call-arg]
@@ -34,26 +34,26 @@ class TaskDocument(MoleculeMetadata, extra="allow"):  # type: ignore[call-arg]
     For the list of supported packages, see https://cclib.github.io
     """
 
-    molecule: Optional[Molecule] = Field(
+    molecule: Molecule | None = Field(
         None, description="Final output molecule from the task"
     )
-    energy: Optional[float] = Field(None, description="Final total energy")
-    dir_name: Optional[str] = Field(
+    energy: float | None = Field(None, description="Final total energy")
+    dir_name: str | None = Field(
         None, description="Directory where the output is parsed"
     )
-    logfile: Optional[str] = Field(
+    logfile: str | None = Field(
         None, description="Path to the log file used in the post-processing analysis"
     )
-    attributes: Optional[dict] = Field(
+    attributes: dict | None = Field(
         None, description="Computed properties and calculation outputs"
     )
-    metadata: Optional[dict] = Field(
+    metadata: dict | None = Field(
         None,
         description="Calculation metadata, including input parameters and runtime "
         "statistics",
     )
-    task_label: Optional[str] = Field(None, description="A description of the task")
-    tags: Optional[list[str]] = Field(
+    task_label: str | None = Field(None, description="A description of the task")
+    tags: list[str] | None = Field(
         None, description="Optional tags for this task document"
     )
     last_updated: str = Field(
@@ -67,16 +67,15 @@ class TaskDocument(MoleculeMetadata, extra="allow"):  # type: ignore[call-arg]
     @classmethod
     @requires(cclib, "The cclib TaskDocument requires cclib to be installed.")
     def from_logfile(
-        cls: type[_T],
+        cls,
         dir_name: Union[str, Path],
         logfile_extensions: Union[str, list[str]],
         store_trajectory: bool = False,
-        additional_fields: Optional[dict[str, Any]] = None,
-        analysis: Optional[Union[str, list[str]]] = None,
-        proatom_dir: Optional[Union[Path, str]] = None,
-    ) -> "TaskDocument":
-        """
-        Create a TaskDocument from a log file.
+        additional_fields: dict[str, Any] | None = None,
+        analysis: Union[str, list[str]] | None = None,
+        proatom_dir: Union[Path, str] | None = None,
+    ) -> Self:
+        """Create a TaskDocument from a log file.
 
         For a full description of each field, see https://cclib.github.io/data.html.
 
@@ -260,7 +259,7 @@ def cclib_calculate(
     method: str,
     cube_file: Union[Path, str],
     proatom_dir: Union[Path, str],
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Run a cclib population analysis.
 
@@ -291,20 +290,16 @@ def cclib_calculate(
     )
 
     method = method.lower()
-    cube_methods = ["bader", "ddec6", "hirshfeld"]
+    cube_methods = ("bader", "ddec6", "hirshfeld")
 
     if method in cube_methods and not cube_file:
-        raise FileNotFoundError(
-            f"A cube file must be provided for {method}. Returning None."
-        )
-    if method in ["ddec6", "hirshfeld"] and not proatom_dir:
+        raise FileNotFoundError(f"A cube file must be provided for {method}.")
+    if method in ("ddec6", "hirshfeld") and not proatom_dir:
         if os.getenv("PROATOM_DIR") is None:
-            raise OSError("PROATOM_DIR environment variable not set. Returning None.")
+            raise OSError("PROATOM_DIR environment variable not set.")
         proatom_dir = os.path.expandvars(os.environ["PROATOM_DIR"])
-    if proatom_dir and not os.path.exists(proatom_dir):
-        raise FileNotFoundError(
-            f"Protatom directory {proatom_dir} does not exist. Returning None."
-        )
+    if proatom_dir and not os.path.isdir(proatom_dir):
+        raise FileNotFoundError(f"{proatom_dir=} does not exist.")
 
     if cube_file and method in cube_methods:
         vol = volume.read_from_cube(str(cube_file))
@@ -358,7 +353,7 @@ def cclib_calculate(
 
 def _get_homos_lumos(
     mo_energies: list[list[float]], homo_indices: list[int]
-) -> tuple[list[float], Optional[list[float]], Optional[list[float]]]:
+) -> tuple[list[float], list[float] | None, list[float] | None]:
     """
     Calculate the HOMO, LUMO, and HOMO-LUMO gap energies in eV.
 
@@ -380,13 +375,15 @@ def _get_homos_lumos(
         The HOMO-LUMO gaps (eV), calculated as LUMO_alpha-HOMO_alpha and
         LUMO_beta-HOMO_beta
     """
-    homo_energies = [mo_energies[i][h] for i, h in enumerate(homo_indices)]
-    # Make sure that the HOMO+1 (i.e. LUMO) is in moenergies (sometimes virtual
+    homo_energies = [mo_energies[idx][homo] for idx, homo in enumerate(homo_indices)]
+    # Make sure that the HOMO+1 (i.e. LUMO) is in MO energies (sometimes virtual
     # orbitals aren't printed in the output)
-    for i, h in enumerate(homo_indices):
-        if len(mo_energies[i]) < h + 2:
+    for idx, homo in enumerate(homo_indices):
+        if len(mo_energies[idx]) < homo + 2:
             return homo_energies, None, None
-    lumo_energies = [mo_energies[i][h + 1] for i, h in enumerate(homo_indices)]
+    lumo_energies = [
+        mo_energies[idx][homo + 1] for idx, homo in enumerate(homo_indices)
+    ]
     homo_lumo_gaps = [
         lumo_energies[i] - homo_energies[i] for i in range(len(homo_energies))
     ]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 from jobflow import Flow, Response, job
@@ -20,7 +20,7 @@ from atomate2.common.schemas.defects import CCDDocument
 from atomate2.utils.path import strip_hostname
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
     from emmet.core.tasks import TaskDoc
@@ -60,8 +60,8 @@ def get_charged_structures(structure: Structure, charges: Iterable) -> list[Stru
         A dictionary with the two structures with the charge states added.
     """
     structs_out = [structure.copy() for _ in charges]
-    for i, q in enumerate(charges):
-        structs_out[i].set_charge(q)
+    for idx, q in enumerate(charges):
+        structs_out[idx].set_charge(q)
     return structs_out
 
 
@@ -108,15 +108,15 @@ def spawn_energy_curve_calcs(
         distorted_structure, nimages=s_distortions
     )
     # add all the distorted structures
-    for i, d_struct in enumerate(distorted_structures):
+    for idx, d_struct in enumerate(distorted_structures):
         static_job = static_maker.make(d_struct, prev_dir=prev_dir)
-        suffix = f" {i}" if add_name == "" else f" {add_name} {i}"
+        suffix = f" {idx}" if add_name == "" else f" {add_name} {idx}"
 
         # write some provenances data in info.json file
         info = {
             "relaxed_structure": relaxed_structure,
             "distorted_structure": distorted_structure,
-            "distortion": s_distortions[i],
+            "distortion": s_distortions[idx],
         }
         if add_info is not None:
             info.update(add_info)
@@ -219,8 +219,8 @@ def get_supercell_from_prv_calc(
     )
 
     if sc_mat_ref is not None:
-        latt_ref = Lattice(sc_mat_ref)
-        latt_prv = Lattice(sc_mat_prv)
+        latt_ref = (uc_structure * sc_mat_ref).lattice
+        latt_prv = (uc_structure * sc_mat_prv).lattice
         if not (
             np.allclose(sorted(latt_ref.abc), sorted(latt_prv.abc))
             and np.allclose(sorted(latt_ref.angles), sorted(latt_prv.angles))
@@ -300,7 +300,7 @@ def bulk_supercell_calculation(
 def spawn_defect_q_jobs(
     defect: Defect,
     relax_maker: RelaxMaker,
-    relaxed_sc_lattice: Lattice,
+    relaxed_sc_lattice: Lattice | None = None,
     sc_mat: NDArray | None = None,
     defect_index: int | str = "",
     add_info: dict | None = None,
@@ -329,7 +329,7 @@ def spawn_defect_q_jobs(
         By default only the defect object and charge state are stored.
     relaxed_sc_lattice:
         The lattice of the relaxed supercell. If provided, the lattice parameters
-        of the supercell will be set to value specified.  Otherwise, the lattice it will
+        of the supercell will be set to value specified. Otherwise, the lattice it will
         only by set by `defect.structure` and `sc_mat`.
     validate_charge:
         Whether to validate the charge states of the defect after the atomic relaxation.
@@ -355,7 +355,8 @@ def spawn_defect_q_jobs(
     sc_def_struct = defect.get_supercell_structure(
         sc_mat=sc_mat, relax_radius=relax_radius, perturb=perturb
     )
-    sc_def_struct.lattice = relaxed_sc_lattice
+    if relaxed_sc_lattice is not None:
+        sc_def_struct.lattice = relaxed_sc_lattice
     if sc_mat is not None:
         sc_mat = np.array(sc_mat).tolist()
     for qq in defect.get_charge_states():
@@ -459,7 +460,7 @@ def get_defect_entry(charge_state_summary: dict, bulk_summary: dict) -> list[dic
                 "bulk_dir_name": bulk_dir_name,
                 "bulk_locpot": bulk_locpot,
                 "bulk_uuid": bulk_summary.get("uuid"),
-                "defect_uuid": qq_summary.get("uuid", None),
+                "defect_uuid": qq_summary.get("uuid"),
             }
         )
     return defect_ent_res

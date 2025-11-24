@@ -1,6 +1,7 @@
 import pytest
 from emmet.core.tasks import TaskDoc
-from emmet.core.vasp.calculation import IonicStep, VaspObject
+from emmet.core.types.enums import VaspObject
+from emmet.core.vasp.calculation import IonicStep
 from jobflow import run_locally
 
 from atomate2.vasp.jobs.md import MDMaker
@@ -48,6 +49,6 @@ def test_molecular_dynamics(mock_vasp, clean_dir, si_structure):
     assert len(traj.frame_properties) == nsw
     # check that a frame property can be converted to an IonicStep
     energies = [-11.47041923, -11.46905352, -11.46520398]
-    for i, frame in enumerate(traj.frame_properties):
+    for idx, frame in enumerate(traj.frame_properties):
         ionic_step = IonicStep(**frame)
-        assert ionic_step.e_wo_entrp == pytest.approx(energies[i])
+        assert ionic_step.e_wo_entrp == pytest.approx(energies[idx])
